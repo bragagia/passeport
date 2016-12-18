@@ -1,0 +1,196 @@
+#!/bin/bash
+
+main ()
+{
+	passeport_data="$HOME"/.local/share/passeport
+	mkdir -p $passeport_data
+	mkdir -p $passeport_data/installed
+	if [ "$?" -eq 1 ]; then
+		echo "Failed to create $passeport_data/" >&2
+		exit 1
+	fi
+
+	if [ ! -f "$HOME"/.local/share/passeport/var ]; then
+		cat << STOP > "$passeport_data"/var
+passeport_path=$HOME/passeport
+STOP
+	fi
+	source "$passeport_data"/var
+
+	if [ -z ${XDG_CONFIG_HOME+x} ]; then
+		XDG_CONFIG_HOME="$HOME/.config"
+	fi
+
+	exec_command "$@"
+}
+
+exec_command ()
+{
+	if [[ $# < 1 ]]; then
+		showhelp
+		exit 1
+	else
+		case "$1" in
+			setpath)
+				shift
+				setpath "$@"
+				;;
+
+			update|u)
+				shift
+				update "$@"
+				;;
+
+			install|i)
+				shift
+				install "$@"
+				;;
+
+			remove|r)
+				shift
+				uninstall "$@"
+				;;
+
+			sync|s)
+				shift
+				sync "$@"
+				;;
+
+			help|h|-h|--help)
+				shift
+				help "$@"
+				;;
+
+			*)
+				showhelp
+				exit 1
+				;;
+		esac
+	fi
+}
+
+sync ()
+{
+	cd "$passeport_path"
+	git add -A
+	git commit -m "passeport auto-commit"
+	set -e
+	git pull
+	git push
+	set +e
+}
+
+install ()
+{
+	if [ $# -lt 1 ]; then
+		showhelp install
+		exit 1
+	fi
+	if [ ! -d "$passeport_path"/"$1" ]; then
+		echo "This config does not exist." >&2
+		exit
+	fi
+
+	# Git install
+	local gitfile="$passeport_path"/"$1"/git 
+	if [ -f "$gitfile" ]; then
+		mkdir -p "$passeport_data"/installed/"$1"
+		cp "$gitfile" "$passeport_data"/installed/"$1"/
+
+		grep -v "^/" "$gitfile" |
+		sed "s#^__xdg__#$XDG_CONFIG_HOME#g" |
+		sed "s#^__home__#$HOME#g" |
+		while read line; do
+			local repo=`echo "$line" | sed "s/^.* \([^ ]*\)$/\1/g"`
+			local path=`echo "$line" | sed "s/^\(.*\) [^ ]*$/\1/g"`
+			if [ -e "$path" ]; then
+				echo "There is already something here: $path" >&2
+				echo "Passeport cannot set up git here" >&2
+			else
+				mkdir -p "$path"
+				git clone "$repo" "$path" > /dev/null
+			fi
+		done
+	fi
+
+	# Files install
+	local pathlist=("xdg" "home" "root")
+	local resultpath=("$XDG_CONFIG_HOME" "$HOME" "/")
+	local globallist=(false false true)
+
+	for i in 0 1 2; do
+		local path=${pathlist[$i]} 
+		local result=${resultpath[$i]}
+		local isglobal=${globallist[$i]}
+
+		if [ -d "$passeport_path"/"$1"/"$path" ]; then
+			if $isglobal; then
+				mkdir -p "$passeport_data"/installed/"$1"/"$path"
+				cp -a "$passeport_path"/"$1"/"$path"/. "$passeport_data"/installed/"$1"/"$path"
+				sudo cp --backup=simple --suffix=".passeport_backup" -a "$passeport_path"/"$1"/"$path"/. "$result"
+			else
+				mkdir -p "$passeport_data"/installed/"$1"/"$path"
+				cp -a "$passeport_path"/"$1"/"$path"/. "$passeport_data"/installed/"$1"/"$path"
+				cp --backup=simple --suffix=".passeport_backup" -a "$passeport_path"/"$1"/"$path"/. "$result"
+			fi
+		fi
+	done
+}
+
+update ()
+{
+	if [ $# -lt 1 ]; then
+		showhelp update
+		exit 1
+	fi
+	if [ ! -d "$passeport_path"/"$1" ]; then
+		echo "This config does not exist." >&2
+		exit
+	fi
+
+	# Git update
+	local gitfile="$passeport_path"/"$1"/git 
+	if [ -f "$gitfile" ]; then
+		mkdir -p "$passeport_data"/installed/"$1"
+		cp "$gitfile" "$passeport_data"/installed/"$1"/
+
+		grep -v "^/" "$gitfile" |
+		sed "s#^__xdg__#$XDG_CONFIG_HOME#g" |
+		sed "s#^__home__#$HOME#g" |
+		while read line; do
+			local repo=`echo "$line" | sed "s/^.* \([^ ]*\)$/\1/g"`
+			local path=`echo "$line" | sed "s/^\(.*\) [^ ]*$/\1/g"`
+			if [ -e "$path" ]; then
+				git pull -C "$path"
+			else
+				mkdir -p "$path"
+				git clone "$repo" "$path" > /dev/null
+			fi
+		done
+	fi
+
+	# Files update
+	local pathlist=("xdg" "home" "root")
+	local resultpath=("$XDG_CONFIG_HOME" "$HOME" "/")
+	local globallist=(false false true)
+
+	for i in 0 1 2; do
+		local path=${pathlist[$i]} 
+		local result=${resultpath[$i]}
+		local isglobal=${globallist[$i]}
+
+		if [ -d "$passeport_path"/"$1"/"$path" ]; then
+			if $isglobal; then
+				mkdir -p "$passeport_data"/installed/"$1"/"$path"
+				cp -a "$passeport_path"/"$1"/"$path"/. "$passeport_data"/installed/"$1"/"$path"
+				sudo cp -ua "$passeport_path"/"$1"/"$path"/. "$result"
+			else
+				mkdir -p "$passeport_data"/installed/"$1"/"$path"
+				cp -a "$passeport_path"/"$1"/"$path"/. "$passeport_data"/installed/"$1"/"$path"
+				cp -ua "$passeport_path"/"$1"/"$path"/. "$result"
+			fi
+		fi
+	done
+}
+
+main "$@"
