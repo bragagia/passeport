@@ -48,7 +48,7 @@ exec_command ()
 
 			remove|r)
 				shift
-				uninstall "$@"
+				remove "$@"
 				;;
 
 			sync|s)
@@ -68,6 +68,8 @@ exec_command ()
 		esac
 	fi
 }
+
+# Commands
 
 sync ()
 {
@@ -90,6 +92,10 @@ install ()
 		echo "This config does not exist." >&2
 		exit
 	fi
+	if is_installed "$1"; then
+		echo "This config is already installed." >&2
+		exit 1
+	fi
 
 	# Git install
 	local gitfile="$passeport_path"/"$1"/git 
@@ -103,8 +109,9 @@ install ()
 		while read line; do
 			local repo=`echo "$line" | sed "s/^.* \([^ ]*\)$/\1/g"`
 			local path=`echo "$line" | sed "s/^\(.*\) [^ ]*$/\1/g"`
+			echo "git: $path"
 			if [ -e "$path" ]; then
-				echo "There is already something here: $path" >&2
+				echo "There is already something here" >&2
 				echo "Passeport cannot set up git here" >&2
 			else
 				mkdir -p "$path"
@@ -145,7 +152,11 @@ update ()
 	fi
 	if [ ! -d "$passeport_path"/"$1" ]; then
 		echo "This config does not exist." >&2
-		exit
+		exit 1
+	fi
+	if ! is_installed "$1"; then
+		echo "This config is not installed." >&2
+		exit 1
 	fi
 
 	# Git update
@@ -160,8 +171,9 @@ update ()
 		while read line; do
 			local repo=`echo "$line" | sed "s/^.* \([^ ]*\)$/\1/g"`
 			local path=`echo "$line" | sed "s/^\(.*\) [^ ]*$/\1/g"`
+			echo "git: $path"
 			if [ -e "$path" ]; then
-				git pull -C "$path"
+				git -C "$path" pull
 			else
 				mkdir -p "$path"
 				git clone "$repo" "$path" > /dev/null
@@ -170,6 +182,8 @@ update ()
 	fi
 
 	# Files update
+	remove_files "$1"
+
 	local pathlist=("xdg" "home" "root")
 	local resultpath=("$XDG_CONFIG_HOME" "$HOME" "/")
 	local globallist=(false false true)
@@ -192,5 +206,61 @@ update ()
 		fi
 	done
 }
+
+# Utilities
+
+is_installed ()
+{
+	if [ "$1" == "" ]; then
+		echo "Empty config name" >&2
+		exit 1
+	fi
+
+	if [ -d "$passeport_data"/installed/"$1" ]; then
+		return 0
+	else
+		return 1
+	fi
+}
+
+remove_files ()
+{
+	if ! is_installed "$1"; then
+		echo "This config is not installed." >&2
+		exit 1
+	fi
+
+	local pathlist=("xdg" "home" "root")
+	local resultpath=("$XDG_CONFIG_HOME" "$HOME" "/")
+	local globallist=(false false true)
+
+	for i in 0 1 2; do
+		local path=${pathlist[$i]} 
+		local result=${resultpath[$i]}
+		local isglobal=${globallist[$i]}
+
+		if [ -d "$passeport_data"/installed/"$1"/"$path" ]; then
+			from="$passeport_data"/installed/"$1"/"$path"
+			to="$result"
+			for src_file in $(find "$from" | tac | head -n -1); do
+				dst_file=$(echo "$src_file" | sed "s#$from#$to#g")
+				if $isglobal; then
+					sudo rm -d "$dst_file" 2> /dev/null
+					if [ -f "$dst_file".passeport_backup ]; then
+						sudo mv "$dst_file".passeport_backup "$dst_file"
+					fi
+				else
+					rm -d "$dst_file" 2> /dev/null
+					if [ -f "$dst_file".passeport_backup ]; then
+						mv "$dst_file".passeport_backup "$dst_file"
+					fi
+				fi
+				rm -d "$src_file" 2> /dev/null
+			done
+		fi
+	done
+}
+
+# Run
 
 main "$@"
