@@ -41,6 +41,11 @@ exec_command ()
 				update "$@"
 				;;
 
+			update-all|ua)
+				shift
+				update_all "$@"
+				;;
+
 			install|i)
 				shift
 				install "$@"
@@ -103,45 +108,11 @@ install ()
 		mkdir -p "$passeport_data"/installed/"$1"
 		cp "$gitfile" "$passeport_data"/installed/"$1"/
 
-		grep -v "^/" "$gitfile" |
-		sed "s#^__xdg__#$XDG_CONFIG_HOME#g" |
-		sed "s#^__home__#$HOME#g" |
-		while read line; do
-			local repo=`echo "$line" | sed "s/^.* \([^ ]*\)$/\1/g"`
-			local path=`echo "$line" | sed "s/^\(.*\) [^ ]*$/\1/g"`
-			echo "git: $path"
-			if [ -e "$path" ]; then
-				echo "There is already something here" >&2
-				echo "Passeport cannot set up git here" >&2
-			else
-				mkdir -p "$path"
-				git clone "$repo" "$path" > /dev/null
-			fi
-		done
+		fillgitfile "$gitfile" | gitinstall
 	fi
 
 	# Files install
-	local pathlist=("xdg" "home" "root")
-	local resultpath=("$XDG_CONFIG_HOME" "$HOME" "/")
-	local globallist=(false false true)
-
-	for i in 0 1 2; do
-		local path=${pathlist[$i]} 
-		local result=${resultpath[$i]}
-		local isglobal=${globallist[$i]}
-
-		if [ -d "$passeport_path"/"$1"/"$path" ]; then
-			if $isglobal; then
-				mkdir -p "$passeport_data"/installed/"$1"/"$path"
-				cp -a "$passeport_path"/"$1"/"$path"/. "$passeport_data"/installed/"$1"/"$path"
-				sudo cp --backup=simple --suffix=".passeport_backup" -a "$passeport_path"/"$1"/"$path"/. "$result"
-			else
-				mkdir -p "$passeport_data"/installed/"$1"/"$path"
-				cp -a "$passeport_path"/"$1"/"$path"/. "$passeport_data"/installed/"$1"/"$path"
-				cp --backup=simple --suffix=".passeport_backup" -a "$passeport_path"/"$1"/"$path"/. "$result"
-			fi
-		fi
-	done
+	files_install "$1"
 }
 
 update ()
@@ -161,50 +132,79 @@ update ()
 
 	# Git update
 	local gitfile="$passeport_path"/"$1"/git 
-	if [ -f "$gitfile" ]; then
+	local oldgitfile="$passeport_data"/installed/"$1"/git
+
+	if [ -f "$gitfile" ] && [ -f "$oldgitfile" ]; then
+		local sgitfile=`mktemp`
+		local soldgitfile=`mktemp`
+		sort < "$gitfile" > "$sgitfile"
+		sort < "$oldgitfile" > "$soldgitfile"
+
+		local newgit=`mktemp`
+		local commongit=`mktemp`
+		local oldgit=`mktemp`
+		comm -13 "$soldgitfile" "$sgitfile" > "$newgit"
+		comm -12 "$soldgitfile" "$sgitfile" > "$commongit"
+		comm -23 "$soldgitfile" "$sgitfile" > "$oldgit"
+
+		fillgitfile "$oldgit" | gitremove
+		fillgitfile "$commongit" | gitupdate
+		fillgitfile "$newgit" | gitinstall
+
+		cp "$gitfile" "$oldgitfile"
+	elif [ -f "$oldgitfile" ]; then
+		fillgitfile "$oldgitfile" | gitremove
+	elif [ -f "$gitfile" ]; then
 		mkdir -p "$passeport_data"/installed/"$1"
 		cp "$gitfile" "$passeport_data"/installed/"$1"/
 
-		grep -v "^/" "$gitfile" |
-		sed "s#^__xdg__#$XDG_CONFIG_HOME#g" |
-		sed "s#^__home__#$HOME#g" |
-		while read line; do
-			local repo=`echo "$line" | sed "s/^.* \([^ ]*\)$/\1/g"`
-			local path=`echo "$line" | sed "s/^\(.*\) [^ ]*$/\1/g"`
-			echo "git: $path"
-			if [ -e "$path" ]; then
-				git -C "$path" pull
-			else
-				mkdir -p "$path"
-				git clone "$repo" "$path" > /dev/null
-			fi
-		done
+		fillgitfile "$gitfile" | gitupdate
+
+		cp "$gitfile" "$oldgitfile"
 	fi
 
+
 	# Files update
-	remove_files "$1"
+	files_remove "$1"
 
-	local pathlist=("xdg" "home" "root")
-	local resultpath=("$XDG_CONFIG_HOME" "$HOME" "/")
-	local globallist=(false false true)
+	files_install "$1"
+}
 
-	for i in 0 1 2; do
-		local path=${pathlist[$i]} 
-		local result=${resultpath[$i]}
-		local isglobal=${globallist[$i]}
-
-		if [ -d "$passeport_path"/"$1"/"$path" ]; then
-			if $isglobal; then
-				mkdir -p "$passeport_data"/installed/"$1"/"$path"
-				cp -a "$passeport_path"/"$1"/"$path"/. "$passeport_data"/installed/"$1"/"$path"
-				sudo cp -ua "$passeport_path"/"$1"/"$path"/. "$result"
-			else
-				mkdir -p "$passeport_data"/installed/"$1"/"$path"
-				cp -a "$passeport_path"/"$1"/"$path"/. "$passeport_data"/installed/"$1"/"$path"
-				cp -ua "$passeport_path"/"$1"/"$path"/. "$result"
-			fi
-		fi
+update_all ()
+{
+	list_installed |
+	while read line; do
+		echo "# Updating $line"
+		update $line
 	done
+}
+
+remove ()
+{
+	if [ $# -lt 1 ]; then
+		showhelp update
+		exit 1
+	fi
+	if [ ! -d "$passeport_path"/"$1" ]; then
+		echo "This config does not exist." >&2
+		exit 1
+	fi
+	if ! is_installed "$1"; then
+		echo "This config is not installed." >&2
+		exit 1
+	fi
+
+	# Git remove
+	local gitfile="$passeport_data"/installed/"$1"/git
+
+	if [ -f "$gitfile" ]; then
+		fillgitfile "$gitfile" | gitremove
+	fi
+
+	# Files remove
+	files_remove "$1"
+
+	rm -rf "$passeport_data"/installed/"$1"
 }
 
 # Utilities
@@ -223,7 +223,7 @@ is_installed ()
 	fi
 }
 
-remove_files ()
+files_remove ()
 {
 	if ! is_installed "$1"; then
 		echo "This config is not installed." >&2
@@ -259,6 +259,104 @@ remove_files ()
 			done
 		fi
 	done
+}
+
+files_install ()
+{
+	local pathlist=("xdg" "home" "root")
+	local resultpath=("$XDG_CONFIG_HOME" "$HOME" "/")
+	local globallist=(false false true)
+
+	for i in 0 1 2; do
+		local path=${pathlist[$i]} 
+		local result=${resultpath[$i]}
+		local isglobal=${globallist[$i]}
+
+		if [ -d "$passeport_path"/"$1"/"$path" ]; then
+			if $isglobal; then
+				mkdir -p "$passeport_data"/installed/"$1"/"$path"
+				cp -a "$passeport_path"/"$1"/"$path"/. "$passeport_data"/installed/"$1"/"$path"
+				sudo cp -ua "$passeport_path"/"$1"/"$path"/. "$result"
+			else
+				mkdir -p "$passeport_data"/installed/"$1"/"$path"
+				cp -a "$passeport_path"/"$1"/"$path"/. "$passeport_data"/installed/"$1"/"$path"
+				cp -ua "$passeport_path"/"$1"/"$path"/. "$result"
+			fi
+		fi
+	done
+}
+
+fillgitfile ()
+{
+	grep -v "^/" "$1" |
+	sed "s#^__xdg__#$XDG_CONFIG_HOME#g" |
+	sed "s#^__home__#$HOME#g" 
+}
+
+gitgetrepofromline ()
+{
+	echo "$1" | sed "s/^.* \([^ ]*\)$/\1/g"
+}
+
+gitgetpathfromline ()
+{
+	echo "$1" | sed "s/^\(.*\) [^ ]*$/\1/g"
+}
+
+gitinstall ()
+{
+	while read line; do
+		local repo=`gitgetrepofromline "$line"`
+		local path=`gitgetpathfromline "$line"`
+
+		echo "git: $path"
+
+		if [ -e "$path" ]; then
+			mv "$path" "$path".passeport_backup
+		fi
+
+		mkdir -p "$path"
+		git clone "$repo" "$path" > /dev/null
+	done
+}
+
+gitremove ()
+{
+	while read line; do
+		local repo=`gitgetrepofromline "$line"`
+		local path=`gitgetpathfromline "$line"`
+
+		echo "git: $path"
+
+		if [ -e "$path"/.git ]; then
+			rm -rf "$path"
+			echo "Removed."
+		else
+			echo "There is no git setup here." >&2
+		fi
+	done
+}
+
+gitupdate ()
+{
+	while read line; do
+		local repo=`gitgetrepofromline "$line"`
+		local path=`gitgetpathfromline "$line"`
+
+		echo "git: $path"
+
+		if [ -e "$path" ]; then
+			git -C "$path" pull > /dev/null
+		else
+			mkdir -p "$path"
+			git clone "$repo" "$path" > /dev/null
+		fi
+	done
+}
+
+list_installed ()
+{
+	ls "$passeport_data"/installed/ 2> /dev/null | cat
 }
 
 # Run
