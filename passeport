@@ -46,6 +46,12 @@ exec_command ()
 				update_all "$@"
 				;;
 
+			sync-update-all|sua)
+				shift
+				sync "$@"
+				update_all "$@"
+				;;
+
 			install|i)
 				shift
 				install "$@"
