@@ -282,11 +282,11 @@ files_install ()
 			if $isglobal; then
 				mkdir -p "$passeport_data"/installed/"$1"/"$path"
 				cp -a "$passeport_path"/"$1"/"$path"/. "$passeport_data"/installed/"$1"/"$path"
-				sudo cp -ua "$passeport_path"/"$1"/"$path"/. "$result"
+				sudo cp -a --backup=simple --suffix=.passeport_backup "$passeport_path"/"$1"/"$path"/. "$result"
 			else
 				mkdir -p "$passeport_data"/installed/"$1"/"$path"
 				cp -a "$passeport_path"/"$1"/"$path"/. "$passeport_data"/installed/"$1"/"$path"
-				cp -ua "$passeport_path"/"$1"/"$path"/. "$result"
+				cp -a --backup=simple --suffix=.passeport_backup "$passeport_path"/"$1"/"$path"/. "$result"
 			fi
 		fi
 	done
